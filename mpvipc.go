@@ -106,7 +106,7 @@ func NewConnection(socketName string) *Connection {
 // Open connects to the socket. Returns an error if already connected.
 // It also starts listening to events, so ListenForEvents() can be called
 // afterwards.
-func (c *Connection) Open() error {
+func (c *Connection) Open(events chan<- *Event, stop <-chan struct{}) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -118,7 +118,7 @@ func (c *Connection) Open() error {
 		return fmt.Errorf("can't connect to mpv's socket: %s", err)
 	}
 	c.client = client
-	go c.listen()
+	go c.listen(events, stop)
 	return nil
 }
 
@@ -302,7 +302,7 @@ func (c *Connection) checkResult(data []byte) {
 	}
 }
 
-func (c *Connection) checkEvent(data []byte) {
+func (c *Connection) checkEvent(data []byte, events chan<- *Event, stop <-chan struct{}) {
 	event := &Event{}
 	err := json.Unmarshal(data, &event)
 	if err != nil {
@@ -313,19 +313,25 @@ func (c *Connection) checkEvent(data []byte) {
 	}
 	c.lock.Lock()
 	for listenerID := range c.eventListeners {
-		listener := c.eventListeners[listenerID]
-		go func() {
-			listener <- event
-		}()
+		select {
+		case <-stop:
+			close(events)
+			return
+		default:
+			listener := c.eventListeners[listenerID]
+			go func() {
+				listener <- event
+			}()
+		}
 	}
 	c.lock.Unlock()
 }
 
-func (c *Connection) listen() {
+func (c *Connection) listen(events chan<- *Event, stop <-chan struct{}) {
 	scanner := bufio.NewScanner(c.client)
 	for scanner.Scan() {
 		data := scanner.Bytes()
-		c.checkEvent(data)
+		c.checkEvent(data, events, stop)
 		c.checkResult(data)
 	}
 	_ = c.Close()
