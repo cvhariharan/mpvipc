@@ -25,6 +25,9 @@ type Connection struct {
 	lastCloseWaiter uint
 	closeWaiters    map[uint]chan struct{}
 
+	events chan *Event
+	stop   chan struct{}
+
 	lock *sync.Mutex
 }
 
@@ -106,7 +109,7 @@ func NewConnection(socketName string) *Connection {
 // Open connects to the socket. Returns an error if already connected.
 // It also starts listening to events, so ListenForEvents() can be called
 // afterwards.
-func (c *Connection) Open(events chan<- *Event, stop <-chan struct{}) error {
+func (c *Connection) Open(events chan *Event, stop chan struct{}) error {
 	c.lock.Lock()
 	defer c.lock.Unlock()
 
@@ -118,6 +121,8 @@ func (c *Connection) Open(events chan<- *Event, stop <-chan struct{}) error {
 		return fmt.Errorf("can't connect to mpv's socket: %s", err)
 	}
 	c.client = client
+	c.events = events
+	c.stop = stop
 	go c.listen(events, stop)
 	return nil
 }
@@ -152,6 +157,10 @@ func (c *Connection) NewEventListener() (chan *Event, chan struct{}) {
 	stop := make(chan struct{})
 	go c.ListenForEvents(events, stop)
 	return events, stop
+}
+
+func (c *Connection) GetListeners() (chan *Event, chan struct{}) {
+	return c.events, c.stop
 }
 
 // Call calls an arbitrary command and returns its result. For a list of
